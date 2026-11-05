@@ -1,0 +1,34 @@
+[Unit]
+Description=Repro Room control plane (FastAPI)
+After=network-online.target docker.service
+Wants=network-online.target
+Requires=docker.service
+
+[Service]
+Type=simple
+User=reproroom
+Group=reproroom
+SupplementaryGroups=docker
+EnvironmentFile=/etc/repro-room/repro-room.env
+WorkingDirectory=/var/lib/repro-room
+# Listens on HOST:PORT from the env file (127.0.0.1:8000); trusts X-Forwarded-For only from Caddy on localhost.
+ExecStart=/opt/repro-room/.venv/bin/repro-room
+Restart=on-failure
+RestartSec=3
+# Hardening for the control plane itself (untrusted code never runs here).
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/var/lib/repro-room
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+RestrictNamespaces=yes
+SystemCallArchitectures=native
+
+[Install]
+WantedBy=multi-user.target

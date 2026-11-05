@@ -1,0 +1,156 @@
+{% set v = job.verdict %}
+<span id="job-meta" hidden data-rev="{{ job.rev }}" data-status="{{ job.status }}" data-now="{{ now }}"></span>
+<section class="jobhead">
+  <div class="jobtitle">
+    <div class="eyebrow">{% if job.kind == 'drill' %}Containment drill{% elif job.kind == 'text' %}Pasted issue{% else %}GitHub issue{% endif %} · job {{ job.id }}</div>
+    <h1>{% if job.issue %}{{ job.issue.title }}{% else %}{{ job.source }}{% endif %}</h1>
+    {% if job.issue and job.issue.url %}<a class="src" href="{{ job.issue.url }}" rel="noopener noreferrer" target="_blank">{{ job.issue.repo }}#{{ job.issue.number }}{% if job.issue.state %} · {{ job.issue.state }}{% endif %} ↗</a>{% endif %}
+  </div>
+  <div class="verdict-box">
+    {% if v %}<span class="badge big {{ verdict_style.get(v.code, 'muted') }}">{{ v.label }}</span>
+    {% elif job.status == 'queued' %}<span class="badge big muted">Queued{% if position %} · {{ position }} ahead{% endif %}</span>
+    {% else %}<span class="badge big running">Running</span>{% endif %}
+    {% if job.started_at %}<div class="elapsed">total <span class="timer" data-started="{{ job.started_at }}"{% if job.finished_at %} data-ended="{{ job.finished_at }}"{% endif %}></span></div>{% endif %}
+  </div>
+</section>
+{% if v %}<p class="verdict-reason">{{ v.reason }}</p>{% endif %}
+{% if job.error %}<div class="alert">{{ job.error }}</div>{% endif %}
+{% for n in job.notes %}<div class="note">{{ n }}</div>{% endfor %}
+
+<div class="layout">
+  <aside class="card timeline">
+    <h2>Timeline</h2>
+    <ol>
+      {% for ev in job.events %}
+      <li class="ev {{ ev.status }}">
+        <span class="dot" aria-hidden="true"></span>
+        <div>
+          <div class="t">{{ ev.title }}</div>
+          {% if ev.detail %}<div class="d">{{ ev.detail }}</div>{% endif %}
+          <div class="meta"><span class="timer" data-started="{{ ev.started }}"{% if ev.ended %} data-ended="{{ ev.ended }}"{% endif %}></span>{% if ev.ref is not none %} · <a href="#run-{{ ev.ref }}">sandbox log</a>{% endif %}</div>
+        </div>
+      </li>
+      {% endfor %}
+      {% if job.status == 'queued' %}<li class="ev pending"><span class="dot"></span><div><div class="t">Waiting for the sandbox{% if position %} ({{ position }} job{{ 's' if position != 1 }} ahead){% endif %}</div></div></li>{% endif %}
+    </ol>
+  </aside>
+
+  <div class="main">
+    {% if job.explanation %}
+    <section class="card">
+      <h2>What happened</h2>
+      <p class="prose">{{ job.explanation }}</p>
+    </section>
+    {% endif %}
+
+    {% if job.drill %}
+    <section class="card">
+      <h2>Attacker's view <span class="hint">what the hostile script observed from inside the sandbox</span></h2>
+      <table class="attacks">
+        <tbody>
+        {% for a in job.drill.attacks %}
+          <tr>
+            <td class="what"><b>{{ a.attack }}</b>{% if a.goal %}<div class="sub">Goal: {{ a.goal }}</div>{% endif %}</td>
+            <td class="obs">{{ a.observed }}</td>
+            <td class="res">{% if a.contained %}<span class="badge good">contained</span>{% else %}<span class="badge bad">escaped</span>{% endif %}</td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </section>
+    <section class="card">
+      <h2>Host's view <span class="hint">checks the control plane ran outside the sandbox</span></h2>
+      <ul class="checks">
+        {% for c in job.drill.checks %}<li class="{{ 'ok' if c.ok else 'fail' }}"><b>{{ c.check }}</b><span>{{ c.detail }}</span></li>{% endfor %}
+      </ul>
+      <table class="snap">
+        <thead><tr><th></th><th>Before</th><th>After</th></tr></thead>
+        <tbody>
+          <tr><td>Host canary file</td><td>{{ job.drill.before.canary.sha256 }}</td><td>{{ job.drill.after.canary.sha256 if job.drill.after.canary.exists else 'MISSING' }}</td></tr>
+          <tr><td>App /healthz</td><td>{{ job.drill.before.app.status }} · {{ job.drill.before.app.ms }} ms</td><td>{{ job.drill.after.app.status }} · {{ job.drill.after.app.ms }} ms</td></tr>
+          <tr><td>Sandbox containers alive</td><td>{{ job.drill.before.sandbox_containers }}</td><td>{{ job.drill.after.sandbox_containers }}</td></tr>
+          <tr><td>Host load (1 min)</td><td>{{ job.drill.before.load1 }}</td><td>{{ job.drill.after.load1 }}</td></tr>
+          <tr><td>Host memory available</td><td>{{ job.drill.before.mem_available_mb }} MB</td><td>{{ job.drill.after.mem_available_mb }} MB</td></tr>
+        </tbody>
+      </table>
+    </section>
+    {% endif %}
+
+    {% if job.facts and job.kind != 'drill' %}
+    <section class="card">
+      <h2>Extracted facts <span class="hint">LLM output, validated</span></h2>
+      <dl class="kv">
+        <div><dt>Package</dt><dd>{{ job.facts.package or '–' }}{% if job.facts.import_name %} <span class="sub">(import {{ job.facts.import_name }})</span>{% endif %}</dd></div>
+        <div><dt>Reported version</dt><dd>{{ job.facts.affected_version or 'not stated' }}</dd></div>
+        {% if job.versions %}<div><dt>Latest on PyPI</dt><dd>{{ job.versions.latest }}</dd></div>{% endif %}
+        <div><dt>Symptom</dt><dd>{{ job.facts.symptom|replace('_', ' ') }}{% if job.facts.expected_exception %} · {{ job.facts.expected_exception }}{% endif %}</dd></div>
+        <div class="wide"><dt>Claimed behaviour</dt><dd>{{ job.facts.claimed_behaviour }}</dd></div>
+      </dl>
+      {% if job.facts.snippet %}<details id="snippet"><summary>Reporter's snippet (verbatim)</summary><pre class="plain">{{ job.facts.snippet }}</pre></details>{% endif %}
+    </section>
+    {% endif %}
+
+    {% if job.scripts %}
+    <section class="card">
+      <h2>repro.py <span class="hint"><span class="key added"></span>added by Repro Room <span class="key original"></span>from the issue{% if job.scripts|selectattr('unmarked')|list %} <span class="key unmarked"></span>changed without the marker{% endif %}</span></h2>
+      {% for s in job.scripts %}
+      <details id="script-{{ loop.index0 }}"{% if loop.last %} open{% endif %}>
+        <summary>{% if job.scripts|length > 1 %}Version {{ loop.index }} · {% endif %}{{ s.reason }} · {{ s.lines|length }} lines, {{ s.added }} added{% if s.unmarked %}, {{ s.unmarked }} unmarked{% endif %}</summary>
+        <pre class="code">{% for l in s.lines %}<span class="ln {{ l.kind }}">{{ l.text }}</span>{% endfor %}</pre>
+      </details>
+      {% endfor %}
+    </section>
+    {% endif %}
+
+    {% if job.runs %}
+    <section class="card">
+      <h2>Sandbox runs <span class="hint">one fresh container per step, destroyed after it</span></h2>
+      {% for r in job.runs %}
+      <article class="run" id="run-{{ loop.index0 }}">
+        <header>
+          <span class="phase {{ r.phase }}">{{ 'fetch · network on' if r.phase == 'fetch' else 'run · network off' }}</span>
+          <b>{{ {'affected': 'reported version', 'latest': 'latest release', 'hostile': 'hostile script', 'drill': 'drill package'}.get(r.role, r.role) }}</b>
+          <span class="sub">{{ r.version }}{% if r.attempt is not none and r.phase == 'run' and job.kind != 'drill' %} · attempt {{ r.attempt + 1 }}{% endif %}</span>
+          <span class="spacer"></span>
+          {% if r.classification %}<span class="badge {{ {'bug': 'bad', 'ok': 'good', 'script_error': 'warn'}.get(r.classification.kind, 'muted') }}">{{ r.classification.kind|replace('_', ' ') }}</span>{% endif %}
+        </header>
+        <dl class="stats">
+          <div><dt>Exit</dt><dd>{% if r.timed_out %}124 · killed at {{ sandbox.run_timeout|int }} s{% else %}{{ r.exit_code }}{% if r.exit_code == 137 %} · SIGKILL{% endif %}{% endif %}</dd></div>
+          <div><dt>Time</dt><dd>{{ r.duration }} s</dd></div>
+          <div><dt>Container</dt><dd>{{ 'destroyed' if r.removed else 'STILL PRESENT' }}</dd></div>
+          <div><dt>Output</dt><dd>{{ 'truncated at cap' if r.truncated else 'complete' }}</dd></div>
+          {% if r.installed_version %}<div><dt>Installed</dt><dd>{{ r.installed_version }}</dd></div>{% endif %}
+        </dl>
+        {% if r.classification %}<p class="why">{{ r.classification.reason }}</p>{% endif %}
+        <div class="flags">{% for f in r.flags|flag_pairs %}<code>{{ f }}</code>{% endfor %}</div>
+        {% if r.stdout %}<details id="run-{{ loop.index0 }}-out"><summary>stdout · {{ r.stdout|length }} bytes</summary><pre class="log">{{ r.stdout }}</pre></details>{% endif %}
+        {% if r.stderr %}<details id="run-{{ loop.index0 }}-err"{% if r.phase == 'run' and r.exit_code not in (0, 124) %} open{% endif %}><summary>stderr · {{ r.stderr|length }} bytes</summary><pre class="log">{{ r.stderr[-6000:] if r.stderr|length > 6000 else r.stderr }}</pre></details>{% endif %}
+        <details id="run-{{ loop.index0 }}-cmd"><summary>Full command · image {{ r.image_digest.split('@')[-1][:19] }}</summary><pre class="log">{{ r.command|join(' ') }}</pre><p class="sub">image {{ r.image_digest }}</p></details>
+      </article>
+      {% endfor %}
+    </section>
+    {% endif %}
+
+    {% if job.draft_comment %}
+    <section class="card">
+      <h2>Draft maintainer comment <span class="hint">never posted anywhere; copy it if you agree</span></h2>
+      <textarea id="draft" class="draft" readonly rows="14">{{ job.draft_comment }}</textarea>
+      <div class="actions"><button class="primary copy" type="button" data-copy="draft">Copy comment</button><span class="copied" aria-live="polite"></span></div>
+    </section>
+    {% endif %}
+
+    {% if job.llm_calls %}
+    <section class="card">
+      <h2>LLM calls <span class="hint">all via {{ llm_host }}</span></h2>
+      <table class="calls">
+        <thead><tr><th>Step</th><th>Model</th><th>Time</th><th>Tokens in/out</th><th></th></tr></thead>
+        <tbody>
+        {% for c in job.llm_calls %}
+          <tr><td>{{ c.purpose }}</td><td>{{ c.model }}</td><td>{{ c.duration }} s</td><td>{{ c.prompt_tokens or '–' }} / {{ c.completion_tokens or '–' }}</td><td>{% if c.ok %}ok{% else %}<span class="sub">{{ c.error }}</span>{% endif %}</td></tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </section>
+    {% endif %}
+  </div>
+</div>

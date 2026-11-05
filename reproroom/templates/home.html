@@ -1,0 +1,94 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="hero">
+  <p class="eyebrow">Bug triage, without the blast radius</p>
+  <h1>Paste a GitHub issue.<br>Get a reproduction you can trust.</h1>
+  <p class="lead">Repro Room reads a Python bug report, turns the reporter's own snippet into a minimal <code>repro.py</code>,
+    and runs it at the reported version and at the latest release, each in a disposable, offline sandbox.
+    Code decides the verdict. The model only explains it.</p>
+
+  {% if error %}<div class="alert" role="alert">{{ error }}</div>{% endif %}
+
+  <form class="submit" method="post" action="/jobs">
+    <label class="sr" for="url">GitHub issue URL</label>
+    <input id="url" type="url" name="url" placeholder="https://github.com/owner/repo/issues/123" value="{{ url }}" autocomplete="off" spellcheck="false">
+    <button class="primary" type="submit">Reproduce</button>
+  </form>
+  <details class="paste">
+    <summary>…or paste the issue text</summary>
+    <form method="post" action="/jobs">
+      <input type="text" name="title" placeholder="Title (optional)" maxlength="200">
+      <textarea name="text" rows="8" placeholder="Paste the issue body: the code snippet, what happens, and the package version"></textarea>
+      <button class="primary" type="submit">Reproduce pasted text</button>
+    </form>
+  </details>
+  <p class="fine">Public demo: one job at a time, queue of {{ limits.queue }}, {{ limits.per_ip }} jobs per {{ limits.window_min }} min per address,
+    {{ limits.daily }} per day. Python packages from PyPI only. Nothing is ever posted to GitHub.</p>
+</section>
+
+<section class="grid2">
+  <div class="card">
+    <h2>Try a verified example</h2>
+    <ul class="examples">
+      {% for e in examples %}
+      <li>
+        <form method="post" action="/jobs"><input type="hidden" name="url" value="{{ e.url }}"><button class="linkish" type="submit">{{ e.label }}</button></form>
+        <span>{{ e.blurb }}</span>
+      </li>
+      {% endfor %}
+    </ul>
+  </div>
+  <div class="card drill-card">
+    <h2>Containment drill</h2>
+    <p>Run a deliberately hostile “reproduction”: it steals the environment, reads <code>/proc/1/environ</code>, tries
+      <code>curl | sh</code>, fork-bombs, runs <code>rm -rf ~</code> and <code>rm -rf /</code>, fills the disk and allocates memory until something stops it.</p>
+    <p>You see what the attacker observed from inside, and what the host observed from outside, before and after.</p>
+    <form method="post" action="/drill"><button class="danger" type="submit">Run containment drill</button></form>
+  </div>
+</section>
+
+<section id="how" class="card">
+  <h2>How it works</h2>
+  <ol class="steps">
+    <li><b>Read</b><span>The issue via the GitHub REST API, read-only.</span></li>
+    <li><b>Extract</b><span>The LLM returns package, reported version, claimed behaviour and the snippet as JSON, validated against PyPI.</span></li>
+    <li><b>Write</b><span><code>repro.py</code> from the snippet. Every line the model adds is marked <code># added by Repro Room</code>; it must print <code>REPRO: BUG</code> or <code>REPRO: OK</code>.</span></li>
+    <li><b>Run</b><span>At the reported and at the latest version, each in its own fresh sandbox: fetch wheels with the network on, then run with the network off.</span></li>
+    <li><b>Repair</b><span>Only if the script itself is broken (syntax, a missing helper, an unrelated import), at most twice, all logged.</span></li>
+    <li><b>Verdict</b><span>Deterministic rules over exit codes, the wall clock, markers and exception types. Not the LLM.</span></li>
+    <li><b>Explain</b><span>A plain explanation and a draft maintainer comment you can copy. Nothing is posted.</span></li>
+  </ol>
+</section>
+
+<section id="containment" class="card">
+  <h2>Containment model</h2>
+  <div class="limits">
+    <div><b>Process isolation</b><span>Untrusted code never runs in the app process or on the host: each step is a fresh <code>{{ sandbox.cli }}{% if sandbox.oci_runtime %} --runtime {{ sandbox.oci_runtime }}{% endif %}</code> container.</span></div>
+    <div><b>Network</b><span>Off (<code>--network none</code>) whenever untrusted code runs. The fetch step only runs <code>pip download --only-binary=:all:</code>: wheels, no <code>setup.py</code>.</span></div>
+    <div><b>Secrets</b><span>No host environment is forwarded; the script sees exactly 5 variables. API keys stay in the control plane.</span></div>
+    <div><b>Filesystem</b><span>Read-only root, script and wheels mounted read-only, a {{ sandbox.work_tmpfs }} tmpfs work dir that dies with the container.</span></div>
+    <div><b>Privileges</b><span>User 65534, <code>--cap-drop ALL</code>, <code>no-new-privileges</code>.</span></div>
+    <div><b>Resources</b><span>{{ sandbox.memory }} memory (no swap), {{ sandbox.cpus }} CPU, {{ sandbox.pids_limit }} processes, {{ sandbox.run_timeout|int }} s wall clock enforced from the host, {{ (sandbox.output_cap // 1024) }} KB output cap.</span></div>
+    <div><b>Lifecycle</b><span><code>--rm</code> after every step, verified gone; the job directory is deleted at the end; a startup janitor removes anything labelled <code>reproroom</code>.</span></div>
+  </div>
+</section>
+
+{% if recent %}
+<section class="card">
+  <h2>Recent runs</h2>
+  <table class="recent">
+    <thead><tr><th>Issue</th><th>Verdict</th><th>When</th></tr></thead>
+    <tbody>
+    {% for j in recent %}
+      <tr>
+        <td><a href="/jobs/{{ j.id }}">{% if j.issue and j.issue.repo and j.issue.number %}{{ j.issue.repo }}#{{ j.issue.number }}{% elif j.kind == 'drill' %}Containment drill{% elif j.kind == 'issue' %}{{ j.source|replace('https://github.com/', '')|replace('/issues/', '#') }}{% else %}{{ j.title or 'Pasted issue text' }}{% endif %}</a>
+          {% if j.issue and j.issue.title and j.kind != 'drill' %}<div class="sub">{{ j.issue.title }}</div>{% endif %}</td>
+        <td>{% if j.verdict %}<span class="badge {{ verdict_style.get(j.verdict.code, 'muted') }}">{{ j.verdict.label }}</span>{% else %}<span class="badge muted">{{ j.status }}</span>{% endif %}</td>
+        <td class="sub">{{ j.created_at|ago }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endif %}
+{% endblock %}

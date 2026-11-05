@@ -1,0 +1,6 @@
+# Rendered by setup-vm.sh: __SITE__ becomes <public-ip>.sslip.io; Caddy obtains the certificate automatically.
+__SITE__ {
+	encode zstd gzip
+	header Strict-Transport-Security "max-age=31536000"
+	reverse_proxy 127.0.0.1:8000
+}

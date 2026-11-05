@@ -1,0 +1,7 @@
+{% extends "base.html" %}
+{% block title %}{% if job.issue %}{{ job.issue.title }}{% else %}{{ job.source }}{% endif %} · Repro Room{% endblock %}
+{% block content %}
+<div id="job" data-id="{{ job.id }}" data-rev="{{ job.rev }}" data-status="{{ job.status }}">
+{% include "_job_body.html" %}
+</div>
+{% endblock %}
